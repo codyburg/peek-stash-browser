@@ -1,83 +1,104 @@
-# Plex sign-in (custom build)
+# Plex server connection and sign-in
 
-Plex sign-in is optional and disabled by default. It verifies a full Plex account through Plex's [documented PIN flow](https://forums.plex.tv/t/authenticating-with-plex/609370/). Plex Home managed profiles are not independent Plex accounts. A Plex account, Plex Pass, or access to your Plex Media Server does not itself grant Peek access.
+Connect a Plex owner account, select its server, and import the full Plex accounts that have accepted access. Manage their Peek activation and roles inside Peek. Plex sign-in remains optional and disabled by default; keep an enabled local administrator for recovery.
 
-## Configuration
-
-Keep an existing local administrator and its password available. Finish Peek's initial setup with that administrator before enabling Plex. Configure these container environment variables:
+## Container configuration
 
 ```dotenv
 PLEX_AUTH_ENABLED=true
 PLEX_CLIENT_IDENTIFIER=YOUR-GENERATED-STABLE-UUID
-PLEX_PUBLIC_URL=https://peek.example.com
+PLEX_PUBLIC_URL=https://peek-test.example.com
 PLEX_PRODUCT=Peek Stash Browser
 SECURE_COOKIES=true
 TRUST_PROXY=1
 ```
 
-Generate the client identifier once with `[guid]::NewGuid().ToString()` in PowerShell or `node -e "console.log(require('crypto').randomUUID())"`. Reuse it on upgrades; it identifies this installation in Plex Authorized Devices and is public. There is no Plex client secret to obtain. Never put a Plex token in the configuration.
+Generate the client identifier once with `[guid]::NewGuid().ToString()` in PowerShell or `cat /proc/sys/kernel/random/uuid` on Unraid. Reuse it across container recreations and upgrades. It identifies your Peek installation and is not a secret. Do not configure a Plex password or token in an environment variable.
 
-`PLEX_PUBLIC_URL` is the exact origin users visit, without a path, query, or credentials. HTTPS is required except for HTTP localhost development. HTTPS requires `SECURE_COOKIES=true`; Peek validates this on startup. The feature uses a new tab and polls from the original Peek tab, so the normal `SameSite=Strict` session cookie remains intact. The user clicks **Sign in with Plex**, follows **Open Plex to authorize**, authorizes, and returns to the original tab.
+`PLEX_PUBLIC_URL` must match the browser-facing origin exactly, with no path. HTTPS is required except for HTTP localhost development. Set `SECURE_COOKIES=true` for HTTPS. Point Nginx Proxy Manager or your other reverse proxy to the container's HTTP port, preserve the public Host and Origin, and use the HTTPS hostname for all browser access. `TRUST_PROXY=1` assumes one reverse proxy in front of the production image's internal nginx; match your real chain as described in [Configuration](configuration.md).
 
-Configure `TRUST_PROXY` for the actual proxy chain as described in [Configuration](configuration.md). The example assumes one reverse proxy in front of the production container's nginx. Preserve the public Host and Origin headers, serve Peek and its API on the same origin, and restrict direct backend access. Plex return URLs are not derived from forwarded headers. `PROXY_AUTH_HEADER` is a separate authentication method; leave it unset unless deliberately configured with trusted proxy addresses.
+Leave `PROXY_AUTH_HEADER` unset unless you deliberately use a separately secured authentication proxy. Normal Plex sign-in uses Peek's existing protected session cookies, not a username header.
 
-## Approve and link users
+## Connect and import
 
-1. As a local administrator, open Settings → User Management → Plex approvals and account access.
-2. Enter the full Plex account's numeric ID and approve it. A user who has verified with Plex but is unapproved receives their own account ID in Peek's denial message; they can give you that ID. Peek does not automatically create pending users.
-3. An approved user's first Plex login creates a standard `USER` profile, with the normal first-login wizard. It never grants administrator privileges. The generated Peek username includes the Plex ID and a random suffix. Rename/display-name customization is outside this change.
-4. To preserve an existing local profile, sign into that profile first, open Settings → Account, enter its current local password, and choose **Link Plex account**. Authorize the approved Plex account in the new tab. Do this before creating a separate Plex profile: identities already linked to another profile are refused. There is no automatic email or username matching, account merge, unlink, or admin reassignment.
+1. Finish Peek's setup wizard and sign in using a local administrator.
+2. Open **Settings → Server Configuration → Plex server connection**.
+3. Choose **Connect Plex owner account**, open the authorization link in a new tab, and sign into the full Plex account that owns your server. Return to the original Peek tab.
+4. Select one of the servers owned by that account and choose **Select server and import users**.
+5. Open **Settings → User Management → Plex users**. The owner and accepted full accounts are already listed, with their Peek profiles created. Newly imported profiles are inactive and have the **User** role.
+6. Choose **Activate** for each permitted user. Use the **Role** selector to explicitly assign **User** or **Admin**. Admin assignment requires confirmation and uses Peek's existing role/permission handling. Plex ownership never automatically grants Peek administrator privileges.
 
-Approval and identity linkage are stored in SQLite; no persistent Plex token is retained. Each Plex identity can link to only one Peek user. Revoking approval preserves the profile and its history and playlists. Reapproval returns the user to that same profile. Deleting a Peek user deliberately deletes its normal user data; a later approved login can create a new profile.
+The importer excludes managed Home profiles, pending invitations, and accounts shared only to another server. It uses immutable Plex account IDs, not names or emails, for linkage. Usernames are used for display and for new Peek profiles; name collisions get a unique suffix rather than being linked to a local account. The owner is imported as a normal inactive User unless already explicitly linked to an existing profile.
 
-**Access scope:** a new user receives Peek's standard access. Under the existing model, a user without instance selections sees all enabled Stash instances, subject to content restrictions. Instance selection is a viewing preference, not a security boundary. Configure content restrictions explicitly where needed.
+**Access scope:** standard Peek users without instance selections can see all enabled Stash instances, subject to content restrictions. Instance selection is a viewing preference, not an access boundary. Configure restrictions for activated users as needed.
 
-## Revocation and recovery
+## Sign in with Plex
 
-Revoke an ID in User Management to refuse new Plex sessions and reject existing Plex JWTs at their next authenticated request. Signed media requests for Plex-linked profiles also require current approval. A response or stream already in progress is not forcibly terminated. A linked local account can still sign in with its local password. This preserves administrator recovery; disabling a Peek account blocks all its authentication methods and signed links. The UI prevents self-disabling and disabling the last enabled local administrator.
+The login screen displays **Sign in with Plex** when enabled. The user follows the authorization link, completes Plex sign-in in a new tab, and returns to Peek. Peek verifies their account on its backend and requires an active imported identity with membership in the selected server before issuing its normal session.
 
-Plex-only profiles cannot sign in with a local password or use recovery keys to create one, including through an admin password reset. To deny a linked person's access through every method, disable their Peek account as well as revoking the Plex ID.
+- An active member returns to the same Peek profile, playlists, history and assigned role.
+- An inactive member or unknown account is denied access.
+- The browser receives no persistent Plex token. The temporary PIN code and public client identifier appear in Plex's required authorization URL fragment.
 
-Set `PLEX_AUTH_ENABLED=false` and restart to remove Plex login and deny Plex sessions; local accounts remain usable. Plex-only accounts have no local recovery route. Peek does not periodically contact Plex during a session: revoking a device at Plex affects future Plex verification, while Peek approval/deactivation controls existing Peek access.
+PIN flows expire after at most ten minutes, are browser-bound and single-use, and are kept only in memory. A restart requires starting sign-in again. Complete one flow at a time per browser. Deploy one backend process; pending flows are not shared across replicas.
 
-PIN flows last at most ten minutes, are bound to an HTTP-only browser cookie, are single-use, and live only in the server process. A restart requires starting again. Deploy one Peek backend process; pending flows are not shared between replicas. Starting another flow in the same browser replaces the cookie, so complete one flow at a time. Start attempts and polling have separate rate limits; polling Plex is throttled per flow. The app retains no access token after account verification. Plex's short-lived PIN code and public client identifier appear in its required authorization URL fragment; persistent credentials do not.
+## Existing local profiles
 
-## Build and deploy on Unraid
+To use Plex with an existing local profile, sign into that profile first and open **Settings → Account → Link Plex account**. Enter its current local password, then verify the full Plex account through the authorization link. The account must be a verified member of the connected server.
 
-This feature requires your custom image; pulling the upstream image removes it. From the repository root, build a local image with a tag you control. The following tag is an example for your local build, not a published upstream image:
+An untouched inactive imported placeholder can be replaced by this verified link. The placeholder record remains inactive, and the existing local profile keeps its history and settings. Linking does not activate an inactive Plex identity; an administrator must still activate it. An already activated, used, or privileged imported profile cannot be replaced automatically. There is no email/username matching, automatic merge, or arbitrary administrator reassignment.
+
+Deactivating Plex for a linked local profile leaves its local login available. To block all methods, use **Disable a Peek account across all sign-in methods** under User Management. Plex-only profiles cannot establish a local password through recovery or administrator reset.
+
+## Synchronization and revocation
+
+Use **Sync now** for an immediate refresh. Peek also syncs at startup when connected and every **30 minutes** while running.
+
+- New members are imported as inactive Users.
+- Existing activation choices, roles, usernames and Peek activity are preserved.
+- A successfully verified removal clears server membership and Plex activation. Existing Plex sessions and signed media links are refused on their next authenticated request after that sync. A response or stream already in progress is not forcibly terminated.
+- Returning members remain inactive until manually reactivated; they keep their profile and previously assigned role.
+- Incomplete, malformed, oversized, or failed API responses do not replace the last successful membership snapshot. The admin screen shows a sync error, and the scheduler retries next interval. New inactive placeholder records may remain if a database error interrupts a batched import; they grant no access.
+
+Revocation therefore follows the last successful sync, not real-time Plex events. During an API outage, last-known membership remains in use. For immediate denial, deactivate the user in Peek rather than waiting for Plex synchronization. Changing to a different server requires reactivating users. A disconnect clears the encrypted owner credential and all Plex activation/membership while retaining profiles and their data.
+
+The connection uses Plex's account APIs (`/api/v2/resources` and `/api/users/`), not a Plex Media Server database or its local account history. Resources determine ownership; user/server references determine accepted membership. These sharing APIs can evolve, so a live import check is required before upgrading a production instance. See the [PlexAPI source](https://github.com/pushingkarmaorg/python-plexapi/blob/master/plexapi/myplex.py) for their data model and [Plex's PIN flow](https://forums.plex.tv/t/authenticating-with-plex/609370/) for authorization.
+
+## Owner credential storage and recovery
+
+Background sync requires retaining the owner's Plex token. Peek encrypts it with **AES-256-GCM**, using a separate random 32-byte key in `<CONFIG_DIR>/.plex-key` (`/app/data/.plex-key` in the standard container). The key file is created with owner-only permissions. Neither this key nor a Plex token is returned through the admin API, placed in a URL, or logged. Ordinary user tokens are discarded after verification.
+
+Back up the entire appdata directory, including `.plex-key`, the SQLite database, and `.jwt-secret` if used. Database-only backups do not include the encryption key. Restore the matching key with its database or reconnect the Plex owner account; a missing or mismatched key does not grant access or silently decrypt credentials with a new key.
+
+Use **Disconnect Plex** to remove the retained encrypted credential. To revoke its authorization at Plex as well, remove this Peek app's device in Plex's **Authorized Devices** settings. Backups may retain older encrypted credentials, so keep backups protected. If rotating a lost/compromised key, disconnect, replace the key safely while the container is stopped, then reconnect; revoke the old device at Plex where appropriate.
+
+The local administrator remains available when Plex is disabled, disconnected, or unavailable. Peek prevents disabling, deleting, or demoting its last enabled local administrator through these user-management operations. Local recovery should be tested before relying on Plex.
+
+## Upgrade the Unraid test container
+
+The changes are in your local feature branch; cloning upstream will not include them. Export the committed source from Windows:
+
+```powershell
+cd C:\scripts\peek-plex-integration\peek-stash-browser
+git archive --format=tar --output=..\peek-plex-source.tar HEAD
+```
+
+Copy the archive to your Unraid share. The following commands use the test paths from the earlier setup; substitute your actual paths if different. Stop the test container and back up `/mnt/user/appdata/peek-plex-test` before upgrading. Leave the production Peek container on its separate data directory.
 
 ```sh
+cd /mnt/user/appdata/peek-plex-build
+tar -xf /mnt/user/appdata/peek-stash-browser/peek-plex-source.tar
 docker build -f Dockerfile.production -t peek-plex:local .
 ```
 
-Build on Unraid or another machine with Docker. If built elsewhere, transfer it with `docker save -o peek-plex.tar peek-plex:local`, then `docker load -i peek-plex.tar` on Unraid. In the existing Unraid template, change Repository to `peek-plex:local`. Keep the current appdata host directory mapped to `/app/data`, keep the existing port mapping (the production image listens on container port **80**, with template host port **6969**), and preserve JWT secret, PUID/PGID, Stash settings, and other configuration. Add the Plex variables above. Do not use the root `docker-compose.yml` as a production deployment: it builds the development stack.
+`peek-plex:local` is a local custom image tag, not a published upstream image. Source exports now preserve LF line endings for shell scripts via `.gitattributes`; do not edit the scripts with CRLF before building.
 
-Before replacing the container, stop Peek and back up the entire existing appdata directory. Do not run two containers against the same live database. Test on a copy first, especially if your installed Peek release predates this checkout. This branch is based on `3.5.0-beta.2`; normal upstream upgrade requirements still apply.
+Recreate `peek-plex-test` with that new image, retaining its existing environment variables, stable client identifier, and `/mnt/user/appdata/peek-plex-test:/app/data` mapping. Restarting the existing container alone does not replace its image. In an Unraid template, keep container port **80**, your selected host port (the earlier test used **6970**), PUID/PGID, and proxy hostname. No new environment variables are needed for owner connection, server selection, or the fixed 30-minute sync.
 
-The database is `/app/data/peek-stash-browser.db`. The server applies Prisma migrations before listening, using the existing pre-migration backup mechanism. This change adds default-false flags to User and a separate PlexIdentity table; it does not replace user IDs or delete user data. Preserve the whole `/app/data` volume, including database WAL files and persisted `.jwt-secret` if used.
+The application applies the new migration on startup. It adds connection storage and Plex membership metadata without replacing existing user IDs. Before connecting a server, existing manual approvals remain compatible; after connecting, only imported server members can use Plex. The UI now manages imported users rather than asking administrators to enter Plex IDs manually.
 
-For rollback, stop the custom container and restore the full pre-upgrade appdata backup, then restore the exact image version and configuration that used it. Switching images alone is not a database rollback. Settings/history written since the backup will be lost on restoration. For upgrades, update this feature branch against your chosen upstream release, rerun checks, rebuild and retag the custom image, back up, then replace the container. Avoid Unraid Force Update against an upstream tag for this custom feature.
+For rollback, stop the test container and restore the full pre-upgrade appdata backup and the exact earlier image/configuration. Switching images alone does not revert database migrations. Do not mount the live production data directory into the test container, run two containers on the same database, or use the root development `docker-compose.yml` as a production deployment.
 
-## Developer checks
+## Verification
 
-Use Node **22**, as specified by `.nvmrc` and the production Dockerfile. On Windows use `npm.cmd` where execution policy blocks `npm.ps1`. From the repository root:
-
-```powershell
-npm.cmd --prefix shared ci
-npm.cmd --prefix server ci
-npm.cmd --prefix client ci
-npm.cmd --prefix shared run build
-Push-Location server
-npm.cmd exec -- prisma generate
-npm.cmd run lint
-npm.cmd run typecheck
-npm.cmd run test:run -- tests/prisma/migrationFiles.test.ts tests/initializers/migrations.test.ts tests/services/PlexAuthService.test.ts tests/routes/auth.test.ts tests/middleware/authMiddleware.test.ts tests/middleware/auth.test.ts tests/middleware/streamAuth.test.ts tests/controllers/user.test.ts tests/controllers/userFeatures.test.ts
-npm.cmd run build
-Pop-Location
-npm.cmd --prefix client run lint
-npm.cmd --prefix client run typecheck
-npm.cmd --prefix client run test:run -- tests/components/auth/PlexSignIn.test.tsx tests/components/settings/PlexAdminSection.test.tsx tests/components/pages/Login.test.tsx tests/components/settings/UserManagementSection.test.tsx tests/contexts/AuthContext.test.tsx
-npm.cmd --prefix client run build
-```
-
-The Plex server tests create a temporary SQLite database, deploy real migrations, mock Plex HTTP responses, and exercise account creation, linkage, concurrent requests, denial, expiration, replay, token validation, cookies, session revocation and local login. No live Plex credentials or live Stash instance are required for these tests. Container smoke testing and a real HTTPS proxy/Plex authorization check remain required before deploying to the live instance.
+See [Plex validation](../development/plex-validation.md) for exact commands and results. Test against a copy of appdata first: owner connection, correct-server import, inactive denial, activation, explicit Admin assignment, existing-profile linking, sync/removal/reactivation, disconnect, and local-admin recovery.

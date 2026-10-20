@@ -1,53 +1,80 @@
-# Plex implementation validation
+# Plex server connection validation
 
-Validated on Windows/PowerShell on 20 October 2026, from upstream `e5bbcecb` (`3.5.0-beta.2`), on branch `feature/plex-login`. Local runtime: Node `v24.16.0`, npm `11.13.0`. The repository and production image target Node **22**; repeat the checks with that runtime before deployment.
+Validated on Windows/PowerShell on 20 October 2026, branch `feature/plex-login`, extending the initial Plex login implementation at `d4ce9579`. Local runtime: Node `v24.16.0`, npm `11.13.0`. The production Dockerfile targets Node **22**. The initial sign-in image previously built successfully on Unraid with Node 22, as confirmed by the user's build output; the new server-sync image still needs its own Unraid build and live check.
 
-## Build, types and lint
+## Commands
 
-Run directory and exact command:
+From `shared`:
 
-| Directory | Command                                                                     | Result                                                                |
-| --------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `shared`  | `npm.cmd ci --no-audit --no-fund`                                           | Passed                                                                |
-| `server`  | `npm.cmd ci --no-audit --no-fund`                                           | Passed                                                                |
-| `client`  | `npm.cmd ci --no-audit --no-fund`                                           | Passed                                                                |
-| `shared`  | `npm.cmd run build`                                                         | Passed                                                                |
-| `server`  | `npm.cmd exec -- prisma generate`                                           | Passed                                                                |
-| `server`  | `$env:DATABASE_URL='file:./validation.db'; npm.cmd exec -- prisma validate` | Passed; validation does not create this database                      |
-| `server`  | `npm.cmd run typecheck`                                                     | Passed, including test types                                          |
-| `client`  | `npm.cmd run typecheck`                                                     | Passed                                                                |
-| `server`  | `$env:NODE_OPTIONS='--max-old-space-size=8192'; npm.cmd run lint`           | Passed                                                                |
-| `client`  | `npm.cmd run lint`                                                          | Passed                                                                |
-| `server`  | `npm.cmd run build`                                                         | Passed                                                                |
-| `client`  | `npm.cmd run build`                                                         | Passed, with the existing large-chunk warning for the video/VR bundle |
-
-The backend's first full lint run exhausted the default 2 GB JavaScript heap; increasing the heap resolved it. Initial dependency installation was blocked by inherited folder permissions and the sandbox's network/cache access; the locked dependency installs succeeded after scoped access was granted. No dependency manifests or lockfiles were changed. Prisma emits its existing `package.json#prisma` deprecation warning.
-
-## Automated tests
+```powershell
+npm.cmd run build
+```
 
 From `server`:
 
 ```powershell
-npm.cmd run test:run -- tests/prisma/migrationFiles.test.ts tests/initializers/migrations.test.ts tests/services/PlexAuthService.test.ts tests/routes/auth.test.ts tests/middleware/authMiddleware.test.ts tests/middleware/auth.test.ts tests/middleware/streamAuth.test.ts tests/controllers/user.test.ts tests/controllers/userFeatures.test.ts
+npm.cmd exec -- prisma generate
+$env:DATABASE_URL='file:./validation.db'; npm.cmd exec -- prisma validate
+npm.cmd run typecheck
+$env:NODE_OPTIONS='--max-old-space-size=8192'; npm.cmd run lint
+npm.cmd run test:run -- tests/services/PlexServerService.test.ts tests/services/PlexAuthService.test.ts tests/jobs/plexSync.test.ts tests/controllers/user.test.ts tests/controllers/userFeatures.test.ts tests/middleware/authMiddleware.test.ts tests/middleware/auth.test.ts tests/middleware/streamAuth.test.ts tests/routes/auth.test.ts tests/initializers/processHandlers.test.ts tests/initializers/migrations.test.ts tests/prisma/migrationFiles.test.ts
+npm.cmd run build
 ```
-
-Result: **426 tests passed**, across nine files, including 17 Plex tests.
-
-The selection covers migration wrapping/recovery, local authentication and recovery regressions, Plex approval/linking, real migrated SQLite provisioning, concurrent polls, invalid/replayed state, expiration, cancellation during verification, failed Plex token validation, cookie protections, authorization, disabled users, JWT refresh, media-link revocation, deleted profiles, and preservation of existing users/playlists on migration. Plex HTTP responses are mocked; no live credentials are used. The migration initializer test had two hardcoded Unix path expectations; these now use `path.join` so they also work on Windows.
 
 From `client`:
 
 ```powershell
-npm.cmd run test:run -- tests/components/auth/PlexSignIn.test.tsx tests/components/settings/PlexAdminSection.test.tsx tests/components/pages/Login.test.tsx tests/components/settings/UserManagementSection.test.tsx tests/contexts/AuthContext.test.tsx
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run test:run -- tests/components/auth/PlexSignIn.test.tsx tests/components/settings/PlexAdminSection.test.tsx tests/components/settings/PlexServerSection.test.tsx tests/components/pages/Login.test.tsx tests/components/settings/UserManagementSection.test.tsx tests/contexts/AuthContext.test.tsx
+npm.cmd run build
 ```
 
-Result: **38 tests passed**, across five files. Covers the disabled button, authorization/pending/cancel/expiration/error states, linking, admin approval/revocation, and existing login/auth context behavior.
+Results:
 
-## Deployment checks still needed
+| Check                                  | Result                                           |
+| -------------------------------------- | ------------------------------------------------ |
+| Shared build                           | Passed                                           |
+| Prisma generation/schema validation    | Passed                                           |
+| Backend and frontend typechecks        | Passed, including backend test types             |
+| Backend and frontend lint              | Passed; backend uses the larger heap shown above |
+| Selected backend tests                 | 460 passed across 12 files                       |
+| Selected frontend tests                | 44 passed across six files                       |
+| Backend and frontend production builds | Passed                                           |
+| `git diff --check`                     | Passed                                           |
 
-- `docker --version` failed because Docker is not installed/on PATH here. A production image build and container smoke test have not been run.
-- No live Plex account, HTTPS reverse proxy, Unraid host, or live Peek database was used or changed. Perform a real authorization round trip against a copy of the existing appdata before deployment.
-- The Stash-dependent full integration and browser E2E suites were not run. The existing user-deletion integration fixture was extended for the Plex allowlist; the isolated SQLite test verifies deletion clears its link while preserving approval.
-- A user with no selected Stash instances retains Peek's existing default access to all enabled instances, subject to content restrictions. Plex server-sharing checks are deferred.
+The frontend build retains the existing large-chunk warning for video/VR bundles. Prisma retains its `package.json#prisma` deprecation warning. XML import uses the locked `fast-xml-parser` and `fast-xml-validator` packages; no Plex SDK or native dependency is required. Dependency downloads needed sandbox network approval; no live Plex credential was used.
 
-See [Plex deployment and rollback](../getting-started/plex-authentication.md).
+## What the tests establish
+
+The two Plex service suites create separate temporary SQLite databases and apply the repository's real migrations. Plex HTTP responses are mocked. They cover:
+
+- Browser-bound PIN verification, expiry, cancellation, replay, invalid tokens, and concurrent login/provisioning.
+- Protected owner connection that verifies a current administrator, retains only an encrypted token, and excludes credentials from browser responses and URLs.
+- AES-GCM encryption with randomized nonces, tampering detection, and the need for the correct separate persistent key.
+- Owned-server selection and accepted full-account membership; managed profiles, pending invitations, other-server users, and duplicate IDs are excluded or rejected appropriately.
+- New inactive, non-admin profiles created before first login; no matching local usernames are linked automatically.
+- Activation, existing role preservation, repeat/concurrent synchronization, and preservation of playlists and preferences.
+- Member removal, denial on existing authentication paths, manual reactivation on return, and disconnect protection against stale in-flight imports.
+- Failed/incomplete/malformed snapshots preserving the previous membership state rather than bulk-deactivating users.
+- Password-verified linking of an untouched inactive placeholder to an existing local profile; no profile data is deleted.
+- Backward-compatible upgrades of existing users, playlists, Plex identity links, and manual approvals.
+- Thirty-minute scheduling, disabled-feature behavior, retries, graceful shutdown, and protection against deleting or demoting the last local administrator.
+- Existing local login/recovery, JWT refresh source, signed-media authorization, user settings, and role-change regressions.
+
+Frontend tests cover the login-screen Plex button, the separate protected owner-connection flow, pending/cancel/expiry/error states, server selection/import, sync/disconnect, active/inactive controls, explicit role changes, and existing login/auth-context behavior.
+
+## Checks still needed on Unraid
+
+Docker is unavailable on the development PC, so the refreshed container has not been built or run here. Build the new archive with `Dockerfile.production`, recreate the existing test container against its separate appdata directory, and verify through the test HTTPS proxy:
+
+1. Local administrator recovery still works.
+2. Connect the Plex owner, select the intended server, and confirm the imported list matches accepted full accounts.
+3. Inactive accounts cannot sign in; activated accounts can.
+4. An explicitly promoted account receives administrator access; the owner never receives it automatically.
+5. Repeat sync keeps identities, roles and data; removed/restored membership follows the documented inactive/reactivation behavior.
+6. Disconnect/reconnect and a container restart preserve encryption/key behavior and local recovery.
+
+The Stash-dependent full integration and browser E2E suites were not run. Membership reflects the last successful sync; during an upstream outage, previous membership is retained and an error is shown. Removing Plex access can therefore take until the next successful sync; deactivate in Peek for immediate denial at the next request.
+
+See [Plex server connection and deployment](../getting-started/plex-authentication.md).
