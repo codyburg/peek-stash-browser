@@ -101,10 +101,25 @@ model User {
 
 // Approval and linkage survive revocation; no Plex credential is stored.
 model PlexIdentity {
+  username String?
+  serverMember Boolean @default(false)
   accountId String @id
   approved Boolean @default(false)
   userId Int? @unique
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// Singleton; credentials are encrypted using a separate persistent key file.
+model PlexConnection {
+  id Int @id @default(1)
+  encryptedToken String?
+  ownerId String
+  ownerName String
+  serverId String?
+  serverName String?
+  revision String
+  lastSyncedAt DateTime?
+  lastError String?
 }
 
 model UserGroup {

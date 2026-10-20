@@ -40,6 +40,7 @@ export interface PlexFlowResponse {
 
 export type PlexPollResponse =
   | { status: "pending" }
+  | { status: "connected" }
   | (LoginResponse & { status: "complete"; linked: boolean });
 
 export interface PlexAccountResponse {
@@ -53,8 +54,25 @@ export interface PlexAdminResponse {
   identities: Array<{
     accountId: string;
     approved: boolean;
+    username?: string | null;
+    serverMember?: boolean;
     userId: number | null;
-    user: { id: number; username: string; disabled: boolean } | null;
+    user: {
+      id: number;
+      username: string;
+      disabled: boolean;
+      role?: string;
+    } | null;
   }>;
   users: Array<{ id: number; username: string; disabled: boolean }>;
+}
+
+export interface PlexConnectionResponse {
+  connected: boolean;
+  ownerName: string | null;
+  serverId: string | null;
+  serverName: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  syncIntervalMinutes: number;
 }
