@@ -738,7 +738,7 @@ export const getRecoveryKey = async (
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { recoveryKeyHash: true },
+    select: { recoveryKeyHash: true, plexOnly: true },
   });
 
   if (!user) {
@@ -746,7 +746,7 @@ export const getRecoveryKey = async (
     return;
   }
 
-  res.json({ hasRecoveryKey: !!user.recoveryKeyHash });
+  res.json({ hasRecoveryKey: !user.plexOnly && !!user.recoveryKeyHash });
 };
 
 /**
@@ -770,7 +770,7 @@ export const regenerateRecoveryKey = async (
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { password: true },
+    select: { password: true, plexOnly: true },
   });
 
   if (!user) {
@@ -779,7 +779,8 @@ export const regenerateRecoveryKey = async (
   }
 
   // 400, not 401: the client treats 401 as a lost session
-  const validPassword = await bcrypt.compare(currentPassword, user.password);
+  const validPassword =
+    !user.plexOnly && (await bcrypt.compare(currentPassword, user.password));
   if (!validPassword) {
     res.status(400).json({ error: "Current password is incorrect" });
     return;
@@ -2500,6 +2501,12 @@ export const adminRegenerateRecoveryKey = async (
   }
 
   // Only the hash is stored; the admin passes the key on
+  if (user.plexOnly) {
+    res
+      .status(403)
+      .json({ error: "Plex-only accounts cannot use local recovery" });
+    return;
+  }
   const newKey = generateRecoveryKey();
   await prisma.user.update({
     where: { id: userIdInt },
@@ -2743,18 +2750,23 @@ export const completeSetup = async (
   // Mark setup as complete and issue the first recovery key. The
   // conditional update issues at most one key per user: a repeated call
   // leaves the saved key alone and returns none.
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { plexOnly: true },
+  });
   const key = generateRecoveryKey();
   const { count } = await prisma.user.updateMany({
     where: { id: userId, setupCompleted: false },
     data: {
       setupCompleted: true,
       setupCompletedAt: new Date(),
-      recoveryKeyHash: hashRecoveryKey(key),
+      recoveryKeyHash: account?.plexOnly ? null : hashRecoveryKey(key),
     },
   });
 
   res.json({
     success: true,
-    recoveryKey: count === 1 ? formatRecoveryKey(key) : null,
+    recoveryKey:
+      count === 1 && !account?.plexOnly ? formatRecoveryKey(key) : null,
   });
 };

@@ -1,4 +1,5 @@
-BEGIN IMMEDIATE;
+PRAGMA foreign_keys=OFF;
+BEGIN;
 ALTER TABLE "User" ADD COLUMN "disabled" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "User" ADD COLUMN "plexOnly" BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE "PlexIdentity" (
@@ -9,3 +10,4 @@ CREATE TABLE "PlexIdentity" (
 );
 CREATE UNIQUE INDEX "PlexIdentity_userId_key" ON "PlexIdentity"("userId");
 COMMIT;
+PRAGMA foreign_keys=ON;
