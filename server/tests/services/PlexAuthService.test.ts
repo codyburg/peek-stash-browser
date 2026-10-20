@@ -101,6 +101,7 @@ beforeEach(async () => {
   vi.stubEnv("PLEX_CLIENT_IDENTIFIER", "unit-test-client");
   vi.stubEnv("PLEX_PUBLIC_URL", "http://localhost:6969");
   vi.stubEnv("SECURE_COOKIES", "false");
+  await prisma.plexConnection.deleteMany();
   await prisma.plexIdentity.deleteMany();
   await prisma.user.deleteMany();
   claimed = true;
@@ -619,10 +620,11 @@ describe("Plex authentication with real migrated SQLite and mocked Plex", () => 
       data: { userId: local.id, name: "Keep this playlist" },
     });
     await prisma.$executeRawUnsafe('DROP TABLE "PlexIdentity"');
+    await prisma.$executeRawUnsafe('DROP TABLE "PlexConnection"');
     await prisma.$executeRawUnsafe('ALTER TABLE "User" DROP COLUMN "disabled"');
     await prisma.$executeRawUnsafe('ALTER TABLE "User" DROP COLUMN "plexOnly"');
     await prisma.$executeRawUnsafe(
-      "DELETE FROM \"_prisma_migrations\" WHERE migration_name = '20261020000100_plex_auth'"
+      "DELETE FROM \"_prisma_migrations\" WHERE migration_name IN ('20261020000100_plex_auth', '20261020000200_plex_server_sync')"
     );
     execFileSync(
       process.execPath,

@@ -18,6 +18,14 @@ import {
   pollPlexFlow,
   startPlexFlow,
 } from "../services/PlexAuthService.js";
+import {
+  disconnectPlex,
+  listPlexServers,
+  plexConnectionStatus,
+  selectPlexServer,
+  setPlexActive,
+  syncPlexUsers,
+} from "../services/PlexServerService.js";
 import rankingComputeService from "../services/RankingComputeService.js";
 import { dbWriteTransaction } from "../utils/dbWrite.js";
 
@@ -140,8 +148,12 @@ async function poll(
     res.json(result);
     return;
   }
+  if (result.status === "connected") {
+    res.clearCookie(cookieName, cookieOptions()).json({ status: "connected" });
+    return;
+  }
   res.clearCookie(cookieName, cookieOptions());
-  if (!(await plexAccessAllowed(result.user.id, true)))
+  if (!result.linked && !(await plexAccessAllowed(result.user.id, true)))
     throw new AppError("Plex approval has been revoked", 403);
   if (!result.linked) {
     setTokenCookie(res, generateToken(result.user, undefined, "plex"));
@@ -174,13 +186,62 @@ router.post("/cancel", pollLimiter, (req, res) => {
 });
 
 router.use("/admin", authenticate, requireAdmin);
+router.get("/admin/connection", async (_req, res) => {
+  res.json(await plexConnectionStatus());
+});
+router.get("/admin/servers", async (_req, res) => {
+  res.json({ servers: await listPlexServers() });
+});
+router.post("/admin/connect/start", startLimiter, async (req, res) => {
+  const binding = randomBytes(32).toString("base64url");
+  const flow = await startPlexFlow(
+    binding,
+    undefined,
+    (req as AuthenticatedRequest).user.id
+  );
+  res.cookie(cookieName, binding, cookieOptions()).json(flow);
+});
+router.post("/admin/connect/poll", pollLimiter, async (req, res) =>
+  poll(req, res, (req as AuthenticatedRequest).user.id)
+);
+router.post("/admin/server", async (req, res) => {
+  const { serverId } = (req.body ?? {}) as { serverId?: unknown };
+  if (typeof serverId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(serverId))
+    throw new AppError("Select a valid Plex server", 400);
+  res.json(await selectPlexServer(serverId));
+});
+router.post("/admin/sync", async (_req, res) => {
+  res.json(await syncPlexUsers());
+});
+router.post("/admin/disconnect", async (_req, res) => {
+  await disconnectPlex();
+  res.json({ success: true });
+});
+router.put("/admin/active", async (req, res) => {
+  const { accountId, active } = (req.body ?? {}) as {
+    accountId?: unknown;
+    active?: unknown;
+  };
+  if (
+    typeof accountId !== "string" ||
+    !/^[1-9]\d{0,15}$/.test(accountId) ||
+    typeof active !== "boolean"
+  )
+    throw new AppError("Invalid Plex account or activation setting", 400);
+  await setPlexActive(accountId, active, (req as AuthenticatedRequest).user.id);
+  res.json({ success: true });
+});
 router.get("/admin", async (_req, res) => {
   const identities = await prisma.plexIdentity.findMany({
-    include: { user: { select: { id: true, username: true, disabled: true } } },
+    include: {
+      user: {
+        select: { id: true, username: true, disabled: true, role: true },
+      },
+    },
     orderBy: { accountId: "asc" },
   });
   const users = await prisma.user.findMany({
-    select: { id: true, username: true, disabled: true },
+    select: { id: true, username: true, disabled: true, role: true },
     orderBy: { username: "asc" },
   });
   res.json({ enabled: !!plexConfig(), identities, users });
@@ -201,6 +262,8 @@ router.put("/admin/approval", async (req, res) => {
     );
   // Queue with account creation so a revocation cannot race provisioning.
   await dbWriteTransaction("plex-approval", async (tx) => {
+    if (await tx.plexConnection.findUnique({ where: { id: 1 } }))
+      throw new AppError("Manage imported users with the Active control", 400);
     await tx.plexIdentity.upsert({
       where: { accountId },
       create: { accountId, approved },
