@@ -1,12 +1,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiPut } from "@/api";
 import { plexApi } from "@/api/plex";
 import PlexAdminSection from "@/components/settings/PlexAdminSection";
 
 vi.mock("@/api/plex", () => ({ plexApi: vi.fn() }));
+vi.mock("@/api", () => ({ apiPut: vi.fn() }));
+vi.mock("@/hooks/useConfirmDialog", () => ({
+  useConfirmDialog: () => ({
+    confirm: () => Promise.resolve(true),
+    dialog: null,
+  }),
+}));
 const request = vi.mocked(plexApi);
+let active = false;
 beforeEach(() => {
+  active = false;
   request.mockReset();
+  vi.mocked(apiPut).mockReset();
   request.mockImplementation(async (_path, _body, method) => {
     await Promise.resolve();
     return method === "PUT"
@@ -16,42 +27,58 @@ beforeEach(() => {
           identities: [
             {
               accountId: "12345",
-              approved: true,
+              username: "alice",
+              serverMember: true,
+              approved: active,
               userId: 2,
-              user: { id: 2, username: "plex-user", disabled: false },
+              user: {
+                id: 2,
+                username: "alice",
+                disabled: !active,
+                role: "USER",
+              },
             },
           ],
-          users: [{ id: 2, username: "plex-user", disabled: false }],
+          users: [{ id: 2, username: "alice", disabled: !active }],
         };
   });
 });
 describe("Plex administration", () => {
-  it("approves numeric account IDs", async () => {
+  it("activates imported users without requiring account IDs", async () => {
     render(<PlexAdminSection />);
-    fireEvent.change(await screen.findByLabelText("Plex account ID"), {
-      target: { value: "54321" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Approve Plex ID" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
-        "/admin/approval",
-        { accountId: "54321", approved: true },
+        "/admin/active",
+        { accountId: "12345", active: true },
+        "PUT"
+      )
+    );
+    expect(screen.queryByLabelText("Plex account ID")).toBeNull();
+  });
+  it("deactivates an account without deleting its profile", async () => {
+    active = true;
+    render(<PlexAdminSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/admin/active",
+        { accountId: "12345", active: false },
         "PUT"
       )
     );
   });
-  it("revokes approval without deleting the profile", async () => {
+  it("uses Peek's role endpoint after administrator confirmation", async () => {
     render(<PlexAdminSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    fireEvent.change(await screen.findByLabelText("Role for alice"), {
+      target: { value: "ADMIN" },
+    });
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        "/admin/approval",
-        { accountId: "12345", approved: false },
-        "PUT"
-      )
+      expect(apiPut).toHaveBeenCalledWith("/user/2/role", { role: "ADMIN" })
     );
   });
   it("shows failures from disabling accounts", async () => {
+    active = true;
     render(<PlexAdminSection />);
     await screen.findByRole("button", { name: "Disable" });
     request.mockRejectedValueOnce(

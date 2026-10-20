@@ -11,9 +11,11 @@ import Button from "../ui/Button";
 export default function PlexSignIn({
   link = false,
   onLinked,
+  connect = false,
 }: {
   link?: boolean;
   onLinked?: () => void;
+  connect?: boolean;
 }) {
   const [enabled, setEnabled] = useState(false);
   const [flow, setFlow] = useState<PlexFlowResponse | null>(null);
@@ -47,7 +49,7 @@ export default function PlexSignIn({
       }
       try {
         const result = await plexApi<PlexPollResponse>(
-          link ? "/link/poll" : "/poll",
+          connect ? "/admin/connect/poll" : link ? "/link/poll" : "/poll",
           { correlationId: flow.correlationId }
         );
         if (stopped) return;
@@ -57,6 +59,11 @@ export default function PlexSignIn({
         }
         active.current = null;
         setFlow(null);
+        if (result.status === "connected") {
+          setMessage("Plex owner account connected. Select your server below.");
+          onLinked?.();
+          return;
+        }
         if (link) {
           setMessage("Plex account linked.");
           onLinked?.();
@@ -82,7 +89,7 @@ export default function PlexSignIn({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [flow, link, onLinked]);
+  }, [flow, link, connect, onLinked]);
 
   useEffect(
     () => () => {
@@ -102,7 +109,7 @@ export default function PlexSignIn({
     try {
       setFlow(
         await plexApi<PlexFlowResponse>(
-          link ? "/link/start" : "/start",
+          connect ? "/admin/connect/start" : link ? "/link/start" : "/start",
           link ? { password } : {}
         )
       );
@@ -162,7 +169,11 @@ export default function PlexSignIn({
             loading={busy}
             onClick={() => void start()}
           >
-            {link ? "Link Plex account" : "Sign in with Plex"}
+            {connect
+              ? "Connect Plex owner account"
+              : link
+                ? "Link Plex account"
+                : "Sign in with Plex"}
           </Button>
         </>
       )}

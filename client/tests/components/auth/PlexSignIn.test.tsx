@@ -68,6 +68,33 @@ async function start() {
 }
 
 describe("Plex sign-in", () => {
+  it("uses the protected owner-connection flow without signing into a Peek profile", async () => {
+    poll = { status: "connected" };
+    const completed = vi.fn();
+    await act(async () => {
+      render(<PlexSignIn connect onLinked={completed} />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Connect Plex owner account" })
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(
+      request.mock.calls.some(([url]) => url.endsWith("/admin/connect/start"))
+    ).toBe(true);
+    expect(
+      request.mock.calls.some(([url]) => url.endsWith("/admin/connect/poll"))
+    ).toBe(true);
+    expect(completed).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "owner account connected"
+    );
+  });
   it("does not show a button when disabled", async () => {
     enabled = false;
     await show();

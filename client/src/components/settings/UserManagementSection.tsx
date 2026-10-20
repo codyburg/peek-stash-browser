@@ -218,7 +218,7 @@ const UserManagementSection = ({
   return (
     <>
       {/* User Groups Section */}
-      <PlexAdminSection />
+      <PlexAdminSection onUsersChanged={onUsersChanged} />
       <Paper className="mb-6">
         <Paper.Header>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
