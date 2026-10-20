@@ -595,6 +595,18 @@ describe("Plex authentication with real migrated SQLite and mocked Plex", () => 
     expect(await prisma.user.count()).toBe(0);
   });
 
+  it("unlinks a deliberately deleted profile while retaining its administrator-managed approval", async () => {
+    await approve();
+    const started = await flow();
+    const result = await pollPlexFlow(started.correlationId, "browser-secret");
+    if (result.status !== "complete") throw new Error("not completed");
+    await prisma.user.delete({ where: { id: result.user.id } });
+    expect(
+      await prisma.plexIdentity.findUnique({ where: { accountId: "12345" } })
+    ).toMatchObject({ approved: true, userId: null });
+    expect(await plexAccessAllowed(result.user.id, true)).toBe(false);
+  });
+
   it("preserves existing users and playlists when upgrading the previous database schema", async () => {
     const local = await prisma.user.create({
       data: {
