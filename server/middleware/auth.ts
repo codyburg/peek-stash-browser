@@ -17,6 +17,7 @@ import {
   isTrustedAddress,
   proxyPeerAddress,
 } from "../utils/proxyAuthTrust.js";
+import { secureRequestCookie } from "../utils/secureRequestCookie.js";
 
 // Token expires after 2 hours, but we refresh it if older than 1 hour
 // This gives users a 1-hour inactivity window before session expires
@@ -77,7 +78,7 @@ export const generateToken = (
 export const setTokenCookie = (res: Response, token: string) => {
   res.cookie("token", token, {
     httpOnly: true,
-    secure: process.env.SECURE_COOKIES === "true",
+    secure: secureRequestCookie(res.req),
     sameSite: "strict",
     maxAge: TOKEN_EXPIRY_HOURS * 60 * 60 * 1000,
   });

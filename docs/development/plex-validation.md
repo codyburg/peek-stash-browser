@@ -78,3 +78,23 @@ Docker is unavailable on the development PC, so the refreshed container has not 
 The Stash-dependent full integration and browser E2E suites were not run. Membership reflects the last successful sync; during an upstream outage, previous membership is retained and an error is shown. Removing Plex access can therefore take until the next successful sync; deactivate in Peek for immediate denial at the next request.
 
 See [Plex server connection and deployment](../getting-started/plex-authentication.md).
+
+## UI setup revision ? 21 October 2026
+
+Plex setup now lives in the administrator UI. No database migration is added for this revision. `plex-settings.json` persists the generated installation identifier and enabled flag; the previous environment values seed this file once. Local HTTP and reverse-proxy HTTPS use the same server-side PIN flow.
+
+Additional validation commands, run from `server`:
+
+```powershell
+npm.cmd run test:run -- tests/services/PlexAuthService.test.ts tests/services/PlexServerService.test.ts tests/jobs/plexSync.test.ts tests/middleware/auth.test.ts tests/middleware/streamAuth.test.ts tests/routes/auth.test.ts
+npm.cmd run test:run -- tests/services/PlexSettings.test.ts tests/utils/secureRequestCookie.test.ts
+npm.cmd run test:run -- tests/services/PlexServerService.test.ts tests/utils/secureRequestCookie.test.ts tests/controllers/user.test.ts tests/controllers/userFeatures.test.ts tests/middleware/authMiddleware.test.ts tests/initializers/processHandlers.test.ts
+npm.cmd run typecheck
+npm.cmd run build
+```
+
+These runs passed, covering 437 distinct backend tests across 12 files (the server service and cookie tests appear in more than one command). This includes generated identifier persistence, legacy configuration import, UI enable/disable persistence, protected administrator settings, origin/port checks, and automatic cookie security.
+
+From `client`, `npm.cmd run test:run -- tests/components/settings/PlexServerSection.test.tsx tests/components/auth/PlexSignIn.test.tsx` passed all 11 tests. Client typecheck and production build passed. ESLint passed on all changed backend and frontend TypeScript files. The existing frontend video/VR chunk-size warning remains.
+
+The UI setup revision still requires a live Unraid check: first enable and connect over the LAN HTTP address, restart/recreate with the same appdata, then repeat login through the HTTPS proxy. Docker is unavailable on this development PC. No live Plex credentials were used in automated tests.

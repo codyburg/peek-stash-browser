@@ -97,6 +97,9 @@ beforeEach(async () => {
   vi.stubEnv("PLEX_PUBLIC_URL", "http://localhost:6969");
   vi.stubEnv("SECURE_COOKIES", "false");
   vi.stubEnv("CONFIG_DIR", (await database).dir);
+  rmSync(path.join((await database).dir, "plex-settings.json"), {
+    force: true,
+  });
   await prisma.plexConnection.deleteMany();
   await prisma.plexIdentity.deleteMany();
   await prisma.user.deleteMany();
@@ -441,6 +444,35 @@ describe("Plex server connection and membership import", () => {
     expect(await plexAccessAllowed(local.id)).toBe(true);
     expect(await plexAccessAllowed(local.id, true)).toBe(false);
   });
+  it("allows only same-origin administrators to change persisted Plex settings", async () => {
+    const admin = await prisma.user.findUniqueOrThrow({
+      where: { id: adminId },
+    });
+    const update = (
+      cookie?: string,
+      origin = app.baseUrl,
+      enabled: unknown = false
+    ) =>
+      realFetch(`${app.baseUrl}/api/auth/plex/admin/settings`, {
+        method: "PUT",
+        headers: {
+          Origin: origin,
+          "Content-Type": "application/json",
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: JSON.stringify({ enabled }),
+      });
+    expect((await update()).status).toBe(401);
+    const ordinary = await prisma.user.create({
+      data: { username: "ordinary", password: "hash" },
+    });
+    expect((await update(`token=${generateToken(ordinary)}`)).status).toBe(403);
+    const cookie = `token=${generateToken(admin)}`;
+    expect((await update(cookie, "https://attacker.example")).status).toBe(403);
+    expect((await update(cookie, app.baseUrl, "true")).status).toBe(400);
+    expect(await (await update(cookie)).json()).toEqual({ enabled: false });
+    expect((await update(cookie, app.baseUrl, true)).status).toBe(200);
+  });
   it("requires protected administrator flows and never returns the owner credential", async () => {
     const admin = await prisma.user.findUniqueOrThrow({
       where: { id: adminId },
@@ -449,7 +481,7 @@ describe("Plex server connection and membership import", () => {
       realFetch(`${app.baseUrl}/api/auth/plex${route}`, {
         method: "POST",
         headers: {
-          Origin: "http://localhost:6969",
+          Origin: app.baseUrl,
           "Content-Type": "application/json",
           ...(cookie ? { Cookie: cookie } : {}),
         },

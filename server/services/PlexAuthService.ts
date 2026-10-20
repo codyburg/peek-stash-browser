@@ -286,7 +286,6 @@ export async function plexAccessAllowed(
     return false;
   return (
     !(user.plexOnly || plexSession || (linkedMedia && user.plexIdentity)) ||
-    (process.env.PLEX_AUTH_ENABLED === "true" &&
-      user.plexIdentity?.approved === true)
+    (!!plexConfig() && user.plexIdentity?.approved === true)
   );
 }

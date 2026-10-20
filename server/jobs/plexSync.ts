@@ -1,3 +1,4 @@
+import { plexConfig } from "../services/PlexHttp.js";
 import {
   PLEX_SYNC_INTERVAL_MS,
   plexConnectionStatus,
@@ -11,8 +12,9 @@ let active: Promise<void> | undefined;
 export function schedulePlexSync(): void {
   if (timer) return;
   const tick = () => {
-    if (active || process.env.PLEX_AUTH_ENABLED !== "true") return;
+    if (active) return;
     active = (async () => {
+      if (!plexConfig()) return;
       const status = await plexConnectionStatus();
       if (timer && status.connected && status.serverId) await syncPlexUsers();
     })()

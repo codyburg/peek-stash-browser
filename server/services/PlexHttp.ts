@@ -1,34 +1,11 @@
 import { AppError } from "../middleware/errorHandler.js";
+import { readPlexSettings } from "./PlexSettings.js";
 
 export function plexConfig() {
-  if (process.env.PLEX_AUTH_ENABLED !== "true") return null;
-  const clientId = process.env.PLEX_CLIENT_IDENTIFIER?.trim();
-  const publicUrl = process.env.PLEX_PUBLIC_URL?.trim();
-  if (!clientId || !publicUrl)
-    throw new Error("Plex requires PLEX_CLIENT_IDENTIFIER and PLEX_PUBLIC_URL");
-  const url = new URL(publicUrl);
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    url.pathname !== "/" ||
-    (url.protocol !== "https:" &&
-      !(
-        url.protocol === "http:" &&
-        ["localhost", "127.0.0.1"].includes(url.hostname)
-      ))
-  ) {
-    throw new Error(
-      "PLEX_PUBLIC_URL must be an HTTPS origin (HTTP localhost is allowed for development)"
-    );
-  }
-  if (url.protocol === "https:" && process.env.SECURE_COOKIES !== "true") {
-    throw new Error("Plex HTTPS deployments require SECURE_COOKIES=true");
-  }
+  const settings = readPlexSettings();
+  if (!settings.enabled) return null;
   return {
-    clientId,
-    origin: url.origin,
+    clientId: settings.clientId,
     product: process.env.PLEX_PRODUCT?.trim() ?? "Peek Stash Browser",
   };
 }

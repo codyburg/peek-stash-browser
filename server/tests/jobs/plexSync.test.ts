@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { schedulePlexSync, stopPlexSync } from "../../jobs/plexSync.js";
+import { plexConfig } from "../../services/PlexHttp.js";
 import {
   plexConnectionStatus,
   syncPlexUsers,
@@ -11,10 +12,11 @@ vi.mock("../../services/PlexServerService.js", () => ({
   syncPlexUsers: vi.fn(),
   stopPlexRequests: vi.fn(),
 }));
+vi.mock("../../services/PlexHttp.js", () => ({ plexConfig: vi.fn() }));
 vi.mock("../../utils/logger.js", () => ({ logger: { warn: vi.fn() } }));
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubEnv("PLEX_AUTH_ENABLED", "true");
+  vi.mocked(plexConfig).mockReturnValue({ clientId: "test", product: "Peek" });
   vi.mocked(plexConnectionStatus).mockResolvedValue({
     connected: true,
     ownerName: "owner",
@@ -46,7 +48,7 @@ describe("Plex sync schedule", () => {
     expect(syncPlexUsers).toHaveBeenCalledTimes(2);
   });
   it("does no network work when the feature is disabled", async () => {
-    vi.stubEnv("PLEX_AUTH_ENABLED", "false");
+    vi.mocked(plexConfig).mockReturnValue(null);
     schedulePlexSync();
     await vi.advanceTimersByTimeAsync(1800000);
     expect(syncPlexUsers).not.toHaveBeenCalled();

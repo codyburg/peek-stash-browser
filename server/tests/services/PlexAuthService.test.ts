@@ -31,6 +31,7 @@ import {
   pollPlexFlow,
   startPlexFlow,
 } from "../../services/PlexAuthService.js";
+import { setPlexEnabled } from "../../services/PlexSettings.js";
 import {
   getStreamLinkKey,
   signStreamLink,
@@ -97,6 +98,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  vi.stubEnv("CONFIG_DIR", (await database).dir);
+  rmSync(path.join((await database).dir, "plex-settings.json"), {
+    force: true,
+  });
   vi.stubEnv("PLEX_AUTH_ENABLED", "true");
   vi.stubEnv("PLEX_CLIENT_IDENTIFIER", "unit-test-client");
   vi.stubEnv("PLEX_PUBLIC_URL", "http://localhost:6969");
@@ -144,6 +149,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   vi.restoreAllMocks();
+  vi.stubEnv("CONFIG_DIR", (await database).dir);
+  rmSync(path.join((await database).dir, "plex-settings.json"), {
+    force: true,
+  });
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   await app.close();
@@ -163,7 +172,7 @@ async function post(
   route: string,
   body: unknown,
   cookie?: string,
-  origin = "http://localhost:6969"
+  origin = app.baseUrl
 ) {
   return realFetch(`${app.baseUrl}/api/auth${route}`, {
     method: "POST",
@@ -177,17 +186,18 @@ async function post(
 }
 
 describe("Plex authentication with real migrated SQLite and mocked Plex", () => {
-  it("is disabled by default and validates the canonical HTTPS configuration", async () => {
-    vi.stubEnv("PLEX_AUTH_ENABLED", "false");
+  it("supports persisted UI settings without a public URL and preserves the identifier", async () => {
+    const clientId = plexConfig()?.clientId;
+    setPlexEnabled(false);
     expect(plexConfig()).toBeNull();
     await expect(flow()).rejects.toThrow("disabled");
-    vi.stubEnv("PLEX_AUTH_ENABLED", "true");
-    vi.stubEnv("PLEX_PUBLIC_URL", "https://peek.example.test");
-    expect(plexConfig).toThrow("SECURE_COOKIES");
-    vi.stubEnv("SECURE_COOKIES", "true");
-    expect(plexConfig()?.origin).toBe("https://peek.example.test");
-    vi.stubEnv("PLEX_PUBLIC_URL", "https://peek.example.test/untrusted");
-    expect(plexConfig).toThrow("HTTPS origin");
+    vi.stubEnv("PLEX_AUTH_ENABLED", "false");
+    vi.stubEnv("PLEX_PUBLIC_URL", "");
+    setPlexEnabled(true);
+    expect(plexConfig()?.clientId).toBe(clientId);
+    expect((await flow()).authorizationUrl).toContain(
+      "clientID=unit-test-client"
+    );
   });
 
   it("creates one non-admin profile, validates the token in a header and reuses the profile", async () => {
@@ -396,7 +406,7 @@ describe("Plex authentication with real migrated SQLite and mocked Plex", () => 
     const local = await prisma.user.create({
       data: { username: "admin", password, role: "ADMIN" },
     });
-    vi.stubEnv("PLEX_AUTH_ENABLED", "false");
+    setPlexEnabled(false);
     expect(
       (
         await post("/login", {
@@ -431,7 +441,7 @@ describe("Plex authentication with real migrated SQLite and mocked Plex", () => 
       realFetch(`${app.baseUrl}/api/auth/plex/admin/${route}`, {
         method: "PUT",
         headers: {
-          Origin: "http://localhost:6969",
+          Origin: app.baseUrl,
           "Content-Type": "application/json",
           ...(token ? { Cookie: `token=${token}` } : {}),
         },

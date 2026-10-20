@@ -18,7 +18,11 @@ let enabled = true;
 beforeEach(() => {
   enabled = true;
   request.mockReset();
-  request.mockImplementation(async (path) => {
+  request.mockImplementation(async (path, body) => {
+    if (path === "/admin/settings") {
+      enabled = (body as { enabled: boolean }).enabled;
+      return { enabled };
+    }
     await Promise.resolve();
     if (path === "/config") return { enabled };
     if (path === "/admin/connection")
@@ -37,6 +41,24 @@ beforeEach(() => {
   });
 });
 describe("Plex server connection", () => {
+  it("enables Plex entirely through the settings UI", async () => {
+    enabled = false;
+    render(<PlexServerSection />);
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Enable Plex integration",
+    });
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/admin/settings",
+        { enabled: true },
+        "PUT"
+      )
+    );
+    expect(
+      await screen.findByRole("button", { name: "Connect Plex owner account" })
+    ).toBeInTheDocument();
+  });
   it("shows the owner and lets an administrator select and import a server", async () => {
     render(<PlexServerSection />);
     await screen.findByRole("option", { name: "Mothership" });
@@ -88,6 +110,11 @@ describe("Plex server connection", () => {
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith("/config", undefined, "GET")
     );
-    expect(screen.queryByText("Plex server connection")).toBeNull();
+    expect(
+      screen.getByRole("checkbox", { name: "Enable Plex integration" })
+    ).not.toBeChecked();
+    expect(
+      screen.queryByRole("button", { name: "Connect Plex owner account" })
+    ).toBeNull();
   });
 });

@@ -26,14 +26,16 @@ import {
   setPlexActive,
   syncPlexUsers,
 } from "../services/PlexServerService.js";
+import { setPlexEnabled } from "../services/PlexSettings.js";
 import rankingComputeService from "../services/RankingComputeService.js";
 import { dbWriteTransaction } from "../utils/dbWrite.js";
+import { secureRequestCookie } from "../utils/secureRequestCookie.js";
 
 const router = express.Router();
 const cookieName = "peekPlexFlow";
-const cookieOptions = () => ({
+const cookieOptions = (req: express.Request) => ({
   httpOnly: true,
-  secure: process.env.SECURE_COOKIES === "true",
+  secure: secureRequestCookie(req),
   sameSite: "strict" as const,
   path: "/api/auth/plex",
   maxAge: 10 * 60 * 1000,
@@ -51,21 +53,18 @@ const pollLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// A configured canonical origin avoids relying on forwarded host/protocol headers.
+// Compare the browser origin with the original Host, including its port.
+// Forwarded host/protocol headers are deliberately ignored.
 router.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "GET") {
-    const expected = process.env.PLEX_PUBLIC_URL
-      ? new URL(process.env.PLEX_PUBLIC_URL).origin
-      : undefined;
     const origin = req.get("Origin");
     let valid = false;
     try {
       valid =
         !!origin &&
-        (expected
-          ? origin === expected
-          : new URL(origin).host === req.get("host"));
+        ["http:", "https:"].includes(new URL(origin).protocol) &&
+        new URL(origin).host === req.get("host");
     } catch {
       /* invalid origin */
     }
@@ -98,10 +97,10 @@ router.get("/account", authenticate, async (req, res) => {
   });
 });
 
-router.post("/start", startLimiter, async (_req, res) => {
+router.post("/start", startLimiter, async (req, res) => {
   const binding = randomBytes(32).toString("base64url");
   const flow = await startPlexFlow(binding);
-  res.cookie(cookieName, binding, cookieOptions()).json(flow);
+  res.cookie(cookieName, binding, cookieOptions(req)).json(flow);
 });
 
 router.post("/link/start", startLimiter, authenticate, async (req, res) => {
@@ -120,7 +119,7 @@ router.post("/link/start", startLimiter, authenticate, async (req, res) => {
   }
   const binding = randomBytes(32).toString("base64url");
   const flow = await startPlexFlow(binding, user.id);
-  res.cookie(cookieName, binding, cookieOptions()).json(flow);
+  res.cookie(cookieName, binding, cookieOptions(req)).json(flow);
 });
 
 function readFlow(req: express.Request) {
@@ -149,10 +148,12 @@ async function poll(
     return;
   }
   if (result.status === "connected") {
-    res.clearCookie(cookieName, cookieOptions()).json({ status: "connected" });
+    res
+      .clearCookie(cookieName, cookieOptions(req))
+      .json({ status: "connected" });
     return;
   }
-  res.clearCookie(cookieName, cookieOptions());
+  res.clearCookie(cookieName, cookieOptions(req));
   if (!result.linked && !(await plexAccessAllowed(result.user.id, true)))
     throw new AppError("Plex approval has been revoked", 403);
   if (!result.linked) {
@@ -182,10 +183,17 @@ router.post("/link/poll", pollLimiter, authenticate, async (req, res) =>
 router.post("/cancel", pollLimiter, (req, res) => {
   const { correlationId, binding } = readFlow(req);
   cancelPlexFlow(correlationId, binding);
-  res.clearCookie(cookieName, cookieOptions()).json({ success: true });
+  res.clearCookie(cookieName, cookieOptions(req)).json({ success: true });
 });
 
 router.use("/admin", authenticate, requireAdmin);
+router.put("/admin/settings", (req, res) => {
+  const { enabled } = (req.body ?? {}) as { enabled?: unknown };
+  if (typeof enabled !== "boolean")
+    throw new AppError("An enabled flag is required", 400);
+  setPlexEnabled(enabled);
+  res.json({ enabled: !!plexConfig() });
+});
 router.get("/admin/connection", async (_req, res) => {
   res.json(await plexConnectionStatus());
 });
@@ -199,7 +207,7 @@ router.post("/admin/connect/start", startLimiter, async (req, res) => {
     undefined,
     (req as AuthenticatedRequest).user.id
   );
-  res.cookie(cookieName, binding, cookieOptions()).json(flow);
+  res.cookie(cookieName, binding, cookieOptions(req)).json(flow);
 });
 router.post("/admin/connect/poll", pollLimiter, async (req, res) =>
   poll(req, res, (req as AuthenticatedRequest).user.id)

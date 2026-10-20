@@ -4,26 +4,34 @@ Connect a Plex owner account, select its server, and import the full Plex accoun
 
 ## Container configuration
 
-```dotenv
-PLEX_AUTH_ENABLED=true
-PLEX_CLIENT_IDENTIFIER=YOUR-GENERATED-STABLE-UUID
-PLEX_PUBLIC_URL=https://peek-test.example.com
-PLEX_PRODUCT=Peek Stash Browser
-SECURE_COOKIES=true
-TRUST_PROXY=1
+No Plex-specific environment variables, manually generated UUID, or public URL are required. Start Peek with its normal port and persistent `/app/data` volume, finish local administrator setup, then enable Plex under **Settings ? Server Configuration ? Plex server connection**.
+
+For example, after loading or building the custom image on Unraid:
+
+```sh
+mkdir -p /mnt/user/appdata/peek-plex
+docker run -d --name peek-plex --restart unless-stopped \
+  -p 6970:80 \
+  -v /mnt/user/appdata/peek-plex:/app/data \
+  -e PUID=99 -e PGID=100 \
+  peek-plex:local
 ```
 
-Generate the client identifier once with `[guid]::NewGuid().ToString()` in PowerShell or `cat /proc/sys/kernel/random/uuid` on Unraid. Reuse it across container recreations and upgrades. It identifies your Peek installation and is not a secret. Do not configure a Plex password or token in an environment variable.
+Open `http://YOUR-SERVER-IP:6970` and complete setup. The example image tag is the locally built custom image described below.
 
-`PLEX_PUBLIC_URL` must match the browser-facing origin exactly, with no path. HTTPS is required except for HTTP localhost development. Set `SECURE_COOKIES=true` for HTTPS. Point Nginx Proxy Manager or your other reverse proxy to the container's HTTP port, preserve the public Host and Origin, and use the HTTPS hostname for all browser access. `TRUST_PROXY=1` assumes one reverse proxy in front of the production image's internal nginx; match your real chain as described in [Configuration](configuration.md).
+Peek generates a stable client identifier automatically and stores it with the enabled flag in `<CONFIG_DIR>/plex-settings.json`. Include this file in appdata backups. Existing installations import `PLEX_CLIENT_IDENTIFIER` and `PLEX_AUTH_ENABLED` on first use; after that, the UI controls the saved enabled flag. `PLEX_PUBLIC_URL` is no longer used. Keep `PLEX_PRODUCT` only if you want a custom application name.
 
-Leave `PROXY_AUTH_HEADER` unset unless you deliberately use a separately secured authentication proxy. Normal Plex sign-in uses Peek's existing protected session cookies, not a username header.
+Local HTTP access such as `http://192.168.1.10:6970` works without a reverse proxy. For access over the internet, use HTTPS through your reverse proxy. Preserve the browser's Host header, including its port, and Origin header. No Plex callback URL or inbound Plex connection is required: Peek polls Plex from the backend.
+
+Cookies automatically use the Secure flag for direct TLS or matching HTTPS browser Origin/Referer headers. An existing explicit `SECURE_COOKIES=true` or `false` remains an override. A container configured with `SECURE_COOKIES=true` must be accessed over HTTPS; remove the override to use automatic detection. `TRUST_PROXY` remains a separate general setting for client IP handling and should match your actual proxy chain; it is not needed for Plex URL detection.
+
+Leave `PROXY_AUTH_HEADER` unset unless you deliberately use a separately secured authentication proxy. Plex uses Peek's normal session cookies. Local HTTP is suitable for trusted local networks; it does not encrypt sessions in transit.
 
 ## Connect and import
 
 1. Finish Peek's setup wizard and sign in using a local administrator.
 2. Open **Settings → Server Configuration → Plex server connection**.
-3. Choose **Connect Plex owner account**, open the authorization link in a new tab, and sign into the full Plex account that owns your server. Return to the original Peek tab.
+3. Enable **Plex integration**, then choose **Connect Plex owner account**, open the authorization link in a new tab, and sign into the full Plex account that owns your server. Return to the original Peek tab.
 4. Select one of the servers owned by that account and choose **Select server and import users**.
 5. Open **Settings → User Management → Plex users**. The owner and accepted full accounts are already listed, with their Peek profiles created. Newly imported profiles are inactive and have the **User** role.
 6. Choose **Activate** for each permitted user. Use the **Role** selector to explicitly assign **User** or **Admin**. Admin assignment requires confirmation and uses Peek's existing role/permission handling. Plex ownership never automatically grants Peek administrator privileges.
@@ -68,7 +76,7 @@ The connection uses Plex's account APIs (`/api/v2/resources` and `/api/users/`),
 
 Background sync requires retaining the owner's Plex token. Peek encrypts it with **AES-256-GCM**, using a separate random 32-byte key in `<CONFIG_DIR>/.plex-key` (`/app/data/.plex-key` in the standard container). The key file is created with owner-only permissions. Neither this key nor a Plex token is returned through the admin API, placed in a URL, or logged. Ordinary user tokens are discarded after verification.
 
-Back up the entire appdata directory, including `.plex-key`, the SQLite database, and `.jwt-secret` if used. Database-only backups do not include the encryption key. Restore the matching key with its database or reconnect the Plex owner account; a missing or mismatched key does not grant access or silently decrypt credentials with a new key.
+Back up the entire appdata directory, including `plex-settings.json`, `.plex-key`, the SQLite database, and `.jwt-secret` if used. Database-only backups do not include the encryption key. Restore the matching key with its database or reconnect the Plex owner account; a missing or mismatched key does not grant access or silently decrypt credentials with a new key.
 
 Use **Disconnect Plex** to remove the retained encrypted credential. To revoke its authorization at Plex as well, remove this Peek app's device in Plex's **Authorized Devices** settings. Backups may retain older encrypted credentials, so keep backups protected. If rotating a lost/compromised key, disconnect, replace the key safely while the container is stopped, then reconnect; revoke the old device at Plex where appropriate.
 
