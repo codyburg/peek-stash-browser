@@ -46,6 +46,7 @@ import {
   exclusionComputationService,
 } from "../services/ExclusionComputationService.js";
 import { bumpUser, forgetUser } from "../services/LibraryStamp.js";
+import { protectLocalRecovery } from "../services/LocalRecoveryService.js";
 import { setUserPassword } from "../services/PasswordService.js";
 import { resolveUserPermissions } from "../services/PermissionService.js";
 import { rankingComputeService } from "../services/RankingComputeService.js";
@@ -146,7 +147,7 @@ import type {
   UpdateUserSettingsResponse,
   UpdateUserStashInstancesBody,
 } from "../types/api/user.js";
-import { dbWriteBatch, dbWriteTransaction } from "../utils/dbWrite.js";
+import { dbWriteTransaction } from "../utils/dbWrite.js";
 import { userDownloadsDir } from "../utils/downloadPaths.js";
 import { type EntityRef, compositeKey, entityKey } from "../utils/entityRef.js";
 import { pinsOf, validateListPins } from "../utils/filterPins.js";
@@ -938,9 +939,10 @@ export const deleteUser = async (
   // library the heaviest user (42k rows: 18k plays, 6k stats and rankings,
   // 5k exclusions) held the lock 0.15 to 0.44 s, and 0.46 to 0.56 s with
   // its exclusions raised to 181k, so one unit is enough.
-  await dbWriteBatch("user.delete", [
-    prisma.user.delete({ where: { id: userIdInt } }),
-  ]);
+  await dbWriteTransaction("user.delete", async (tx) => {
+    await protectLocalRecovery(tx, userIdInt);
+    await tx.user.delete({ where: { id: userIdInt } });
+  });
   rankingComputeService.forget(userIdInt);
   recommendationService.forget(userIdInt);
   forgetUser(userIdInt);
@@ -989,15 +991,18 @@ export const updateUserRole = async (
   }
 
   // Update user role
-  const updatedUser = await prisma.user.update({
-    where: { id: userIdInt },
-    data: { role },
-    select: {
-      id: true,
-      username: true,
-      role: true,
-      updatedAt: true,
-    },
+  const updatedUser = await dbWriteTransaction("user.role", async (tx) => {
+    if (role === "USER") await protectLocalRecovery(tx, userIdInt);
+    return tx.user.update({
+      where: { id: userIdInt },
+      data: { role },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        updatedAt: true,
+      },
+    });
   });
 
   // Restrictions apply by role (item 13): promotion drops the restricted
